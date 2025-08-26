@@ -1,0 +1,5 @@
+alpaca-py
+cvxpy
+pandas
+scikit-learn
+numpy
