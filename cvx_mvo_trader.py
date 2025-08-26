@@ -58,25 +58,25 @@ def rebalance_alpaca_to_weights(target_w, notional):
     secret = os.environ["APCA_API_SECRET_KEY"]
     trading_client = TradingClient(key, secret, paper=True)
 
-    acct = trading_client.get_account()
-    equity = float(acct.portfolio_value)
+    # Fetch current positions
+    current_positions = {p.symbol: float(p.market_value) for p in trading_client.get_all_positions()}
 
-    # Submit new notional orders
-    for sym, w in target_w.items():
-        notional_amt = float(w * notional)
-        if abs(notional_amt) < 1.0:
+    # Submit new notional orders 
+    
+    for sym, target_w in target_w.items():
+        target_notional = target_w * notional
+        current_notional = current_positions.get(sym, 0.0)
+        delta = target_notional - current_notional
+        if abs(delta) < 1.0:  # skip tiny adjustments
             continue
-        notional_amt = round(abs(notional_amt), 2)
-        side = OrderSide.BUY if notional_amt > 0 else OrderSide.SELL
+        side = OrderSide.BUY if delta > 0 else OrderSide.SELL # negative delta + low frequency = drop now
         req = MarketOrderRequest(
             symbol=sym,
-            notional=notional_amt,
+            notional=abs(delta),
             side=side,
             time_in_force=TimeInForce.DAY
         )
         trading_client.submit_order(req)
-
-    print("Submitted Alpaca orders for target weights.")
 
 
 # -----------------------
@@ -105,7 +105,7 @@ def solve_portfolio(mu, Sigma, w_prev=None, max_invest_fraction=0.5):
     
     # Use a list, not tuple
     constraints = [cp.sum(w) <= max_invest_fraction,  # only invest up to max fraction
-                   w >= 0,
+                   w >= 0, # no shorting (for now!)
                    w <= W_MAX]
 
     # Turnover regularization
