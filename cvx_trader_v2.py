@@ -17,13 +17,13 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 
-UNIVERSE = ["SPY", "QQQ", "IWM", "EFA", "EEM", "TLT", "LQD", "GLD", "DELL", "NVDA", "TSM", "AVGO", "AMD"]
+UNIVERSE = ["SPY", "QQQ", "IWM", "EFA", "EEM", "TLT", "LQD", "GLD", "MSFT", "TSM", "DIA"]
 START = "2024-01-01"
 END   = None
 REBAL_FREQ = "B" # Daily
 RETURN_LOOKBACK_DAYS = 252
-EWMA_HALFLIFE_DAYS = 60
-LAMBDA_RISK = 5.0 # Risk aversion
+EWMA_HALFLIFE_DAYS = 10
+LAMBDA_RISK = 3.0 # Risk aversion
 GAMMA_TC = 0.001
 TAU_TURNOVER = 0.40
 W_MAX = 0.35
@@ -95,7 +95,7 @@ def shrinkage_cov(returns):
     lw = LedoitWolf().fit(returns.values)
     return pd.DataFrame(lw.covariance_, index=returns.columns, columns=returns.columns)
 
-def solve_portfolio(mu, Sigma, w_prev=None, max_invest_fraction=0.5):
+def solve_portfolio(mu, Sigma, w_prev=None, max_invest_fraction=0.8):
     """
     Solve mean-variance portfolio with optional turnover regularization, using least-squares formulation.
     
@@ -181,7 +181,7 @@ def main():
         daily_rets = curve.pct_change().dropna()
         ann_vol = daily_rets.std() * np.sqrt(252)
         sharpe = ann_ret / ann_vol if ann_vol > 0 else np.nan
-        print(f"Backtest: Return {ann_ret:.2%}, Vol {ann_vol:.2%}, Sharpe {sharpe:.2f}")
+        print(f"Backtest: Return {ann_ret:.2%}, Volatility {ann_vol:.2%}, Sharpe {sharpe:.2f}")
 
     if args.paper:
         key = os.environ["APCA_API_KEY_ID"]
