@@ -17,13 +17,13 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 
-UNIVERSE = ["SPY", "QQQ", "IWM", "EFA", "EEM", "TLT", "LQD", "GLD", "DELL", "NVDA"]
+UNIVERSE = ["SPY", "QQQ", "IWM", "EFA", "EEM", "TLT", "LQD", "GLD", "DELL", "NVDA", "TSM", "AVGO", "AMD"]
 START = "2024-01-01"
 END   = None
-REBAL_FREQ = "W-FRI"     # weekly
+REBAL_FREQ = "B" # Daily
 RETURN_LOOKBACK_DAYS = 252
 EWMA_HALFLIFE_DAYS = 60
-LAMBDA_RISK = 5.0
+LAMBDA_RISK = 5.0 # Risk aversion
 GAMMA_TC = 0.001
 TAU_TURNOVER = 0.40
 W_MAX = 0.35
