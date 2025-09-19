@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-cvx_mvo_trader.py
-Mean-variance portfolio optimizer using Alpaca data + paper trading.
+Version 2: rolling portfolio optimization with least squares
+Inspired by https://stanford.edu/class/engr108/lectures/portfolio_slides.pdf
 """
 import os, argparse, math, datetime as dt
 import numpy as np
