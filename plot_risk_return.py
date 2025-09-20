@@ -2,9 +2,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
-# import your trader file (pretend it contains `api` and `UNIVERSE`)
-from cvx_trader_v2 import UNIVERSE, START, END, fetch_alpaca_prices
+# import your trader file
+from cvx_trader_v2 import fetch_alpaca_prices
 import numpy as np
+
+START = "2024-01-01"
+END   = None
+UNIVERSE = ["SPY", "QQQ", "IWM", "EFA", "EEM", "BND", "SBUX", "USMV", "MCD", "PEP", "BA", "GE", "SPLV", "LQD", "GLD", "MSFT", "TSM", "DIA", "AMZN", "NVDA", "PG", "JNJ", "MSFT", "AAPL", "TSLA", "KO", "AVGO"]
 
 class RiskReturnAnalyzer:
     def __init__(self, price_data: pd.DataFrame):
