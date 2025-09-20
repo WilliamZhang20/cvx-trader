@@ -1,6 +1,6 @@
 ﻿# cvx-trader
 
-This repository is used for a trading bot that applies convex optimization to make decisions, via the [cvxpy](https://www.cvxpy.org/) library developed at Stanford.
+This repository is used for a trading bot that applies convex optimization to make decisions, via the [CVXPY](https://www.cvxpy.org/) library developed at Stanford.
 
 As of now, it trades on fake money using an Alpaca Paper account that started with 100K dollars.
 
@@ -18,5 +18,14 @@ Future: automated parameter tuning, options trading with Black-Scholes.
 
 The script `plot_risk_return.py` assists in gauging the annualized risk-return trade-off between various assets. When plotting, one can observe that higher returns often lead to higher risk.
 
-
 The Python script `purge_helper.py` is for helping to get rid of any shares with fractional value on Alpaca.
+
+## Trading Strategy
+
+The strategy used in the trading algorithm is mean-variance optimization. In any investment, we want to maximize gain with the least amount of risk within a certain trading period.
+
+Judging an asset's ability to increase as well as its risk can be based on historical data, as well as current signals. Unsurprisingly, the patterns of the market vary over time. It is also important to account for the fact that future returns may not look like past returns at all.
+
+For example, the picture below is an annualized risk-return plot for a large number of assets from January 2024 to September 2025. Notice that higher gain tends to come with more risk, although there are some exceptions. The position of assets on the plot will also highly depend on the time frame examined. Judging an asset's performance from the last year will yield different results than looking at the last month. 
+
+<img width="800" height="600" alt="risk_return_plot" src="https://github.com/user-attachments/assets/e99e19cc-4f17-40a7-aa24-2ce13e8bff87" />
