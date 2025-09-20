@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Version 2: rolling portfolio optimization with least squares
+Version 3: rolling portfolio optimization with least squares and dynamic risk aversion via k-means clustering
 Inspired by https://stanford.edu/class/engr108/lectures/portfolio_slides.pdf
 """
 import os, argparse, math, datetime as dt
@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import cvxpy as cp
 from sklearn.covariance import LedoitWolf
+from sklearn.cluster import KMeans
 
 # Alpaca SDK
 from alpaca.data.historical import StockHistoricalDataClient
@@ -23,10 +24,12 @@ END   = None
 REBAL_FREQ = "B" # Daily
 RETURN_LOOKBACK_DAYS = 252
 EWMA_HALFLIFE_DAYS = 10
-LAMBDA_RISK = 3.0 # Risk aversion
+LAMBDA_RISK = 3.0 # Base risk aversion
 GAMMA_TC = 0.001
 TAU_TURNOVER = 0.40
 W_MAX = 0.35
+CLUSTER_LOOKBACK = 60 # Days for clustering features
+REGIME_MULTIPLIERS = {0: 0.3, 1: 1.0, 2: 2} # Bull, Neutral, Bear (less aggressive)
 
 # -----------------------
 # Alpaca helpers
@@ -95,11 +98,12 @@ def shrinkage_cov(returns):
     lw = LedoitWolf().fit(returns.values)
     return pd.DataFrame(lw.covariance_, index=returns.columns, columns=returns.columns)
 
-def solve_portfolio(mu, Sigma, w_prev=None, max_invest_fraction=0.8):
+def solve_portfolio(mu, Sigma, w_prev=None, max_invest_fraction=0.8, lambda_risk=LAMBDA_RISK):
     """
-    Solve mean-variance portfolio with optional turnover regularization, using least-squares formulation.
+    Solve mean-variance portfolio with turnover regularization, using least-squares formulation.
     
     max_invest_fraction: fraction of total capital to invest (rest is cash)
+    lambda_risk: dynamic risk aversion parameter
     """
     n = len(mu)
     w = cp.Variable(n)
@@ -107,11 +111,10 @@ def solve_portfolio(mu, Sigma, w_prev=None, max_invest_fraction=0.8):
     # Cholesky decomposition for least-squares form
     L = np.linalg.cholesky(Sigma.values)  # Sigma = L @ L.T
     
-    obj = mu.values @ w - LAMBDA_RISK * cp.sum_squares(L.T @ w)
+    obj = mu.values @ w - lambda_risk * cp.sum_squares(L.T @ w)
     
-    # Use a list, not tuple
     constraints = [cp.sum(w) <= max_invest_fraction,  # only invest up to max fraction
-                   w >= 0, # no shorting (for now!)
+                   w >= 0, # no shorting
                    w <= W_MAX]
 
     # Turnover regularization
@@ -145,12 +148,32 @@ def walk_forward_backtest(px):
     equity_curve = []
     weights_record = {}
 
+    # Pre-fit k-means on initial window
+    initial_window = rets.iloc[:CLUSTER_LOOKBACK]
+    features = np.column_stack([initial_window.mean(axis=1), initial_window.std(axis=1)])
+    kmeans = KMeans(n_clusters=3, random_state=42).fit(features)
+
     for t_idx, today in enumerate(dates):
         if today in rebal_dates:
             window = rets.loc[:today].tail(RETURN_LOOKBACK_DAYS)
+            # Compute clustering features
+            cluster_window = window.tail(CLUSTER_LOOKBACK)
+            features = np.column_stack([cluster_window.mean(axis=1), cluster_window.std(axis=1)])
+            
+            # Update k-means more frequently
+            if t_idx % 10 == 0:
+                kmeans = KMeans(n_clusters=3, random_state=42).fit(features)
+            
+            # Use soft clustering (probability-weighted lambda)
+            current_features = np.array([[window.iloc[-1].mean(), window.iloc[-1].std()]])
+            # Compute distances to centroids and convert to probabilities
+            distances = kmeans.transform(current_features)[0]
+            probs = np.exp(-distances) / np.exp(-distances).sum()  # Softmax-like
+            dynamic_lambda = LAMBDA_RISK * sum(probs[i] * REGIME_MULTIPLIERS[i] for i in range(3))
+
             mu = exp_weighted_mean_returns(window, EWMA_HALFLIFE_DAYS)
             Sigma = shrinkage_cov(window)
-            current_w = solve_portfolio(mu, Sigma, w_prev)
+            current_w = solve_portfolio(mu, Sigma, w_prev, lambda_risk=dynamic_lambda)
             weights_record[today] = current_w
             w_prev = current_w.values.copy()
 
@@ -192,12 +215,20 @@ def main():
         current_positions = {p.symbol: float(p.market_value) for p in trading_client.get_all_positions() if p.symbol in UNIVERSE}
         current_w = pd.Series({sym: current_positions.get(sym, 0.0) / equity for sym in UNIVERSE}) if equity > 0 else pd.Series(0.0, index=UNIVERSE)
         
-        # Build today's allocation
+        # Build today's allocation with soft clustering
         rets = px.pct_change().dropna()
         window = rets.tail(RETURN_LOOKBACK_DAYS)
+        cluster_window = window.tail(CLUSTER_LOOKBACK)
+        features = np.column_stack([cluster_window.mean(axis=1), cluster_window.std(axis=1)])
+        kmeans = KMeans(n_clusters=3, random_state=42).fit(features)
+        current_features = np.array([[window.iloc[-1].mean(), window.iloc[-1].std()]])
+        distances = kmeans.transform(current_features)[0]
+        probs = np.exp(-distances) / np.exp(-distances).sum()
+        dynamic_lambda = LAMBDA_RISK * sum(probs[i] * REGIME_MULTIPLIERS[i] for i in range(3))
+        
         mu = exp_weighted_mean_returns(window, EWMA_HALFLIFE_DAYS)
         Sigma = shrinkage_cov(window)
-        w = solve_portfolio(mu, Sigma, w_prev=current_w.values)
+        w = solve_portfolio(mu, Sigma, w_prev=current_w.values, lambda_risk=dynamic_lambda)
         print("Target weights:\n", w.round(4))
         rebalance_alpaca_to_weights(w, notional=equity)
 
