@@ -6,9 +6,9 @@ from datetime import datetime, timedelta
 from cvx_trader_v2 import fetch_alpaca_prices
 import numpy as np
 
-START = "2024-01-01"
+START = "2025-01-01"
 END   = None
-UNIVERSE = ["SPY", "QQQ", "IWM", "EFA", "EEM", "BND", "SBUX", "USMV", "MCD", "PEP", "BA", "GE", "SPLV", "LQD", "GLD", "MSFT", "TSM", "DIA", "AMZN", "NVDA", "PG", "JNJ", "MSFT", "AAPL", "TSLA", "KO", "AVGO"]
+UNIVERSE = ["SPY", "QQQ", "IWM", "EFA", "EEM", "BND", "SBUX", "MU", "USMV", "MCD", "BA", "GE", "SPLV", "LQD", "GLD", "MSFT", "TSM", "DIA", "AMZN", "NVDA", "PG", "JNJ", "MSFT", "AAPL", "TSLA", "AVGO"]
 
 class RiskReturnAnalyzer:
     def __init__(self, price_data: pd.DataFrame):

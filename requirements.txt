@@ -3,3 +3,6 @@ cvxpy
 pandas
 scikit-learn
 numpy
+ecos
+scs
+hmmlearn>=0.2.8
