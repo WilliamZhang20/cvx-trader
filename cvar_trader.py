@@ -14,7 +14,7 @@ from alpaca.trading.enums import OrderSide, TimeInForce
 # =====================
 # CONFIG
 # =====================
-UNIVERSE = ["SPY", "QQQ", "IWM", "GOOGL", "EEM", "NVDA", "MU", "MSFT", "LQD"]
+UNIVERSE = ["SPY", "QQQ", "TSLA", "GOOGL", "EEM", "NVDA", "MU", "MSFT", "AMZN"]
 START = "2022-01-01"
 END   = None
 
@@ -116,17 +116,17 @@ def detect_regime(rets, lookback=63, crash_thresh=-0.08, cvar_thresh=0.02):
 
     # Crash detection: highest priority
     if worst_single <= crash_thresh:
-        print(f"Detect_regime: {window.index[-1].date()} -> risk_off (reason=crash, worst={worst_single:.2%})")
+        # print(f"Detect_regime: {window.index[-1].date()} -> risk_off (reason=crash, worst={worst_single:.2%})")
         return "risk_off"
 
     # CVaR-based guard
     if port_cvar >= cvar_thresh:
-        print(f"Detect_regime: {window.index[-1].date()} -> risk_off (reason=cvar, port_cvar={port_cvar:.2%})")
+        # print(f"Detect_regime: {window.index[-1].date()} -> risk_off (reason=cvar, port_cvar={port_cvar:.2%})")
         return "risk_off"
 
     # Volatility + negative trend
     if vol_z > 1.0 and trend < 0:
-        print(f"Detect_regime: {window.index[-1].date()} -> risk_off (reason=vol_trend, vol_z={vol_z:.2f}, trend={trend:.2%})")
+        # print(f"Detect_regime: {window.index[-1].date()} -> risk_off (reason=vol_trend, vol_z={vol_z:.2f}, trend={trend:.2%})")
         return "risk_off"
     elif vol_z < -0.5 and trend > 0:
         return "risk_on"
