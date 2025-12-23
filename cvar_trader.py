@@ -14,26 +14,24 @@ from alpaca.trading.enums import OrderSide, TimeInForce
 # =====================
 # CONFIG
 # =====================
-UNIVERSE = ["SPY", "ITA", "IWM", "GOOGL", "EEM", "NVDA", "MU", "MSFT", "QQQ"]
+UNIVERSE = ["SPY", "QQQ", "IWM", "GOOGL", "EEM", "NVDA", "MU", "MSFT", "LQD"]
 START = "2022-01-01"
 END   = None
 
-REBALANCE_FREQ_DAYS = 21  # Monthly rebalance
-LOOKBACK_DAYS = 252       # 1 year (reduced from 2 for speed)
+REBALANCE_FREQ_DAYS = 1
+LOOKBACK_DAYS = 252
 
 # Enhanced CVaR parameters
-CONFIDENCE = 0.95
-LAMBDA_RET = 3.0           # Return reward (increased from 1.0)
-LAMBDA_CVAR = 3.0          # Tail risk penalty (reduced from 5.0)
-LAMBDA_VOL = 1.0           # Volatility penalty (reduced from 2.0)
-LAMBDA_MOMENTUM = 1.5      # Momentum/trend bonus
-LAMBDA_TURNOVER = 0.015    # Transaction cost proxy (reduced)
-
-MAX_WEIGHT = 0.30          # Increased from 0.25
-MAX_INVEST = 1.0           # Increased from 0.95 (be fully invested)
+CONFIDENCE = 0.95 
+LAMBDA_RET = 2.0
+LAMBDA_CVAR = 5.0      
+LAMBDA_MOMENTUM = 1.0
+LAMBDA_TURNOVER = 0.001  
+MAX_WEIGHT = 0.2
+MAX_INVEST = 0.9
 MIN_WEIGHT_THRESHOLD = 0.01
 
-EXEC_BUFFER_ALPHA = 0.9
+EXEC_BUFFER_ALPHA = 0.6
 MIN_TRADE_PCT_NAV = 0.0025
 
 # =====================
@@ -89,6 +87,96 @@ def rebalance_alpaca_to_weights(target_w, current_w, notional):
             )
         )
 
+def detect_regime(rets, lookback=63, crash_thresh=-0.08, cvar_thresh=0.02):
+    """
+    Returns: "risk_on", "neutral", "risk_off"
+
+    Improvements:
+    - Detects extreme single-day crashes (any asset loss below crash_thresh)
+    - Computes a portfolio-level rolling CVaR and uses cvar_thresh as a fallback
+    - Uses a z-score for recent vol versus historical cross-day vol
+    """
+    window = rets.tail(lookback)
+    vol = window.std().mean()
+    trend = window.mean().mean()
+
+    # Use cross-day vol history to get a more stable z-score
+    cross_day_vol = rets.std(axis=1).rolling(lookback).mean().dropna()
+    if len(cross_day_vol) >= 2:
+        vol_z = (vol - cross_day_vol.mean()) / (cross_day_vol.std() + 1e-9)
+    else:
+        vol_z = (vol - rets.std().mean()) / (rets.std().std() + 1e-9)
+
+    # Extreme single-day loss across assets
+    worst_single = window.min().min()
+
+    # Portfolio-level CVaR (equal-weight proxy)
+    port_rets = window.mean(axis=1)
+    port_cvar = rolling_cvar(port_rets, alpha=CONFIDENCE)
+
+    # Crash detection: highest priority
+    if worst_single <= crash_thresh:
+        print(f"Detect_regime: {window.index[-1].date()} -> risk_off (reason=crash, worst={worst_single:.2%})")
+        return "risk_off"
+
+    # CVaR-based guard
+    if port_cvar >= cvar_thresh:
+        print(f"Detect_regime: {window.index[-1].date()} -> risk_off (reason=cvar, port_cvar={port_cvar:.2%})")
+        return "risk_off"
+
+    # Volatility + negative trend
+    if vol_z > 1.0 and trend < 0:
+        print(f"Detect_regime: {window.index[-1].date()} -> risk_off (reason=vol_trend, vol_z={vol_z:.2f}, trend={trend:.2%})")
+        return "risk_off"
+    elif vol_z < -0.5 and trend > 0:
+        return "risk_on"
+    else:
+        return "neutral"
+
+def get_rebalance_freq(regime):
+    if regime == "risk_off":
+        return 1      # daily
+    elif regime == "neutral":
+        return 5      # weekly
+    else:
+        return 10     # bi-weekly
+    
+def rolling_cvar(returns, alpha=0.95):
+    losses = -returns
+    var = np.quantile(losses, alpha)
+    return losses[losses >= var].mean()
+
+def get_cvar_limit(regime):
+    if regime == "risk_off":
+        return 0.015
+    elif regime == "neutral":
+        return 0.03
+    else:
+        return 0.05
+    
+def get_lambdas(regime):
+    if regime == "risk_off":
+        return dict(
+            lambda_ret=0.5,
+            lambda_cvar=10.0,
+            lambda_momentum=0.0,
+            lambda_turnover=0.005
+        )
+    elif regime == "neutral":
+        return dict(
+            lambda_ret=1.5,
+            lambda_cvar=5.0,
+            lambda_momentum=1.0,
+            lambda_turnover=0.002
+        )
+    else:
+        return dict(
+            lambda_ret=3.0,
+            lambda_cvar=2.0,
+            lambda_momentum=2.0,
+            lambda_turnover=0.001
+        )
+
 # =====================
 # Enhanced CVaR Optimizer with Drawdown Control
 # =====================
@@ -100,7 +188,7 @@ def cvar_term(losses, alpha, T):
     Args:
         losses: cvxpy expression for losses
         alpha: confidence level
-        T: number of samples (must be passed explicitly)
+        T: number of samples
     """
     z = cp.Variable()
     u = cp.Variable(T)
@@ -111,6 +199,7 @@ def cvar_term(losses, alpha, T):
         u >= 0,
         z >= 0
     ]
+
     return cvar_expr, constraints
 
 def solve_enhanced_cvar_portfolio(
@@ -119,14 +208,14 @@ def solve_enhanced_cvar_portfolio(
     confidence=CONFIDENCE,
     lambda_ret=LAMBDA_RET,
     lambda_cvar=LAMBDA_CVAR,
-    lambda_vol=LAMBDA_VOL,
+    regime="neutral",
     lambda_momentum=LAMBDA_MOMENTUM,
     lambda_turnover=LAMBDA_TURNOVER,
 ):
     """
     Enhanced CVaR optimizer with:
     - Return CVaR (tail risk)
-    - Volatility penalty (faster than drawdown CVaR)
+    - Volatility penalty removed for LP (set lambda_vol=0)
     - Momentum/trend following
     - Turnover penalty
     """
@@ -140,22 +229,14 @@ def solve_enhanced_cvar_portfolio(
     port_rets = R @ w
     
     # =========================
-    # 1. CVaR of losses (tail risk)
+    # CVaR of losses (tail risk)
     # =========================
     losses = -port_rets
     cvar_ret, cvar_constraints = cvar_term(losses, confidence, T)
-    
+
     # =========================
-    # 2. Volatility (much faster than drawdown CVaR)
+    # Expected return (with recency bias)
     # =========================
-    # Compute covariance matrix
-    cov = np.cov(R.T)
-    portfolio_variance = cp.quad_form(w, cov)
-    
-    # =========================
-    # 3. Expected return (with recency bias)
-    # =========================
-    # Weight recent returns more heavily (exponential decay)
     decay = 0.94
     time_weights = np.array([decay ** (T - t - 1) for t in range(T)])
     time_weights = time_weights / time_weights.sum()
@@ -164,16 +245,14 @@ def solve_enhanced_cvar_portfolio(
     exp_ret = weighted_mean @ w
     
     # =========================
-    # 4. Momentum signal
+    # Momentum signal
     # =========================
-    # Assets with positive recent trend get a bonus
-    # Use last 63 days (3 months) for momentum
     momentum_window = min(63, T // 4)
     recent_cum_ret = np.sum(R[-momentum_window:], axis=0)
     momentum_score = recent_cum_ret @ w
     
     # =========================
-    # 5. Turnover penalty
+    # Turnover penalty
     # =========================
     if w_prev is not None:
         turnover = cp.norm1(w - w_prev)
@@ -187,7 +266,6 @@ def solve_enhanced_cvar_portfolio(
         lambda_ret * exp_ret
         + lambda_momentum * momentum_score
         - lambda_cvar * cvar_ret
-        - lambda_vol * portfolio_variance
         - lambda_turnover * turnover
     )
     
@@ -234,9 +312,7 @@ def solve_enhanced_cvar_portfolio(
     # Threshold small weights
     w_opt[w_opt < MIN_WEIGHT_THRESHOLD] = 0.0
     
-    # Renormalize
-    if w_opt.sum() > 0:
-        w_opt *= MAX_INVEST / w_opt.sum()
+    # No renormalization to allow cash holdings
     
     return pd.Series(w_opt, index=returns.columns)
 
@@ -248,7 +324,8 @@ def walk_forward_backtest(px):
     dates = rets.index
     
     # Rebalance schedule
-    rebal_indices = list(range(LOOKBACK_DAYS, len(dates), REBALANCE_FREQ_DAYS))
+    last_rebalance = -1
+    prev_regime = None
     
     w = pd.Series(0.0, index=px.columns)
     equity = 1.0
@@ -257,15 +334,33 @@ def walk_forward_backtest(px):
     
     for t, day in enumerate(dates):
         # Rebalance if it's a rebalance day
-        if t in rebal_indices:
+        if t >= LOOKBACK_DAYS:
             window = rets.iloc[t - LOOKBACK_DAYS:t]
+            regime = detect_regime(window)
+            if regime != prev_regime:
+                print(f"Regime change on {day.date()}: {prev_regime} -> {regime}")
+                prev_regime = regime
+            freq = get_rebalance_freq(regime)
+            if (t - last_rebalance) >= freq:
+                lambdas = get_lambdas(regime)
             
             try:
-                w_new = solve_enhanced_cvar_portfolio(window, w_prev=w.values)
+                w_new = solve_enhanced_cvar_portfolio(
+                    window,
+                    w_prev=w.values,
+                    regime=regime,
+                    **lambdas,
+                )
                 
                 # Execution buffer to reduce turnover
-                w = EXEC_BUFFER_ALPHA * w_new + (1 - EXEC_BUFFER_ALPHA) * w
-                w /= w.sum() if w.sum() > 0 else 1.0
+                alpha = 0.5 if regime=="risk_off" else 0.9
+                w = alpha * w_new + (1-alpha) * w
+
+                last_rebalance = t
+                
+                # Cap if sum > MAX_INVEST (unlikely but safe)
+                if w.sum() > MAX_INVEST:
+                    w *= MAX_INVEST / w.sum()
                 
                 weights_record[day] = w.copy()
             except Exception as e:
@@ -274,6 +369,9 @@ def walk_forward_backtest(px):
         # Apply daily returns
         if t > 0 and w.sum() > 0:
             equity *= 1.0 + float(rets.iloc[t] @ w)
+
+        if equity < 0.92 * max([e for _, e in curve], default=equity):
+            w *= 0.5
         
         curve.append((day, equity))
     
@@ -354,9 +452,12 @@ def main():
         window = rets.tail(LOOKBACK_DAYS)
 
         print("Optimizing portfolio with enhanced CVaR strategy...")
-        target_w = solve_enhanced_cvar_portfolio(window, w_prev=current_w.values)
+        regime = detect_regime(window)
+        print(f"Paper trading regime on {window.index[-1].date()}: {regime}")
+        lambdas = get_lambdas(regime)
+        target_w = solve_enhanced_cvar_portfolio(window, w_prev=current_w.values, regime=regime, **lambdas)
         target_w = EXEC_BUFFER_ALPHA * target_w + (1 - EXEC_BUFFER_ALPHA) * current_w
-        target_w /= target_w.sum()
+        # No normalization to allow cash
 
         print("\n=== Target Weights ===")
         print(target_w.round(4))
