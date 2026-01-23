@@ -2,6 +2,7 @@ import os, argparse, math, datetime as dt
 import numpy as np
 import pandas as pd
 import cvxpy as cp
+import matplotlib.pyplot as plt
 
 # Alpaca SDK
 from alpaca.data.historical import StockHistoricalDataClient
@@ -14,7 +15,7 @@ from alpaca.trading.enums import OrderSide, TimeInForce
 # =====================
 # CONFIG
 # =====================
-UNIVERSE = ["SPY", "QQQ", "TSLA", "GOOGL", "EEM", "NVDA", "MU", "MSFT", "AMZN"]
+UNIVERSE = ["SPY", "CAT", "GOOGL", "MU", "TSM", "SLV", "GLD", "ITA"]
 START = "2022-01-01"
 END   = None
 
@@ -28,10 +29,9 @@ LAMBDA_CVAR = 5.0
 LAMBDA_MOMENTUM = 1.0
 LAMBDA_TURNOVER = 0.001  
 MAX_WEIGHT = 0.2
-MAX_INVEST = 0.9
+MAX_INVEST = 0.99
 MIN_WEIGHT_THRESHOLD = 0.01
 
-EXEC_BUFFER_ALPHA = 0.6
 MIN_TRADE_PCT_NAV = 0.0025
 
 # =====================
@@ -90,11 +90,9 @@ def rebalance_alpaca_to_weights(target_w, current_w, notional):
 def detect_regime(rets, lookback=63, crash_thresh=-0.08, cvar_thresh=0.02):
     """
     Returns: "risk_on", "neutral", "risk_off"
-
-    Improvements:
-    - Detects extreme single-day crashes (any asset loss below crash_thresh)
-    - Computes a portfolio-level rolling CVaR and uses cvar_thresh as a fallback
-    - Uses a z-score for recent vol versus historical cross-day vol
+    - risk_on → markets look calm and rising → lean into returns
+    - risk_off → markets look dangerous → protect capital
+    - neutral → mixed signals → middle ground
     """
     window = rets.tail(lookback)
     vol = window.std().mean()
@@ -117,7 +115,7 @@ def detect_regime(rets, lookback=63, crash_thresh=-0.08, cvar_thresh=0.02):
     # Crash detection: highest priority
     if worst_single <= crash_thresh:
         # print(f"Detect_regime: {window.index[-1].date()} -> risk_off (reason=crash, worst={worst_single:.2%})")
-        return "risk_off"
+        return "risk_off" 
 
     # CVaR-based guard
     if port_cvar >= cvar_thresh:
@@ -353,7 +351,7 @@ def walk_forward_backtest(px):
                 )
                 
                 # Execution buffer to reduce turnover
-                alpha = 0.5 if regime=="risk_off" else 0.9
+                alpha = 0.2 if regime=="risk_off" else 0.9
                 w = alpha * w_new + (1-alpha) * w
 
                 last_rebalance = t
@@ -431,6 +429,17 @@ def main():
         print(f"Calmar:     {metrics['calmar']:>7.2f}")
         
         print(f"\nFinal weights:\n{weights.iloc[-1].round(4)}")
+        
+        # Temporary plotting logic
+        """
+        plt.figure(figsize=(10, 6))
+        plt.plot(curve.index, curve.values)
+        plt.title('Portfolio Equity Over Backtest Period')
+        plt.xlabel('Date')
+        plt.ylabel('Equity')
+        plt.grid(True)
+        plt.show()
+        """
 
     if args.paper:
         key = os.environ["APCA_API_KEY_ID"]
@@ -456,7 +465,8 @@ def main():
         print(f"Paper trading regime on {window.index[-1].date()}: {regime}")
         lambdas = get_lambdas(regime)
         target_w = solve_enhanced_cvar_portfolio(window, w_prev=current_w.values, regime=regime, **lambdas)
-        target_w = EXEC_BUFFER_ALPHA * target_w + (1 - EXEC_BUFFER_ALPHA) * current_w
+        alpha = 0.2 if regime=="risk_off" else 0.9
+        target_w = alpha * target_w + (1-alpha) * current_w
         # No normalization to allow cash
 
         print("\n=== Target Weights ===")
@@ -466,7 +476,7 @@ def main():
         print(current_w.round(4))
         
         print("\nExecuting trades...")
-        rebalance_alpaca_to_weights(target_w, current_w, equity)
+        # rebalance_alpaca_to_weights(target_w, current_w, equity)
         print("Done!")
 
 if __name__ == "__main__":
